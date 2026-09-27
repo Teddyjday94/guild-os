@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '../../lib/supabase/server'
-import DemoDashboard from '../dashboard/page'
+import WorkspaceClient from './workspace-client'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,10 +12,12 @@ export default async function GuildAppPage() {
     redirect('/login?next=/app')
   }
 
+  const userId = claimsData.claims.sub
   const { data: membership } = await supabase
     .from('guild_members')
-    .select('guild_id, role')
-    .eq('user_id', claimsData.claims.sub)
+    .select('id, guild_id, role, nickname, status')
+    .eq('user_id', userId)
+    .eq('status', 'active')
     .limit(1)
     .maybeSingle()
 
@@ -23,5 +25,51 @@ export default async function GuildAppPage() {
     redirect('/onboarding')
   }
 
-  return <DemoDashboard />
+  const [guildResult, eventsResult, membersResult, charactersResult, rsvpsResult, profileResult] = await Promise.all([
+    supabase
+      .from('guilds')
+      .select('id, name, primary_game, region, timezone')
+      .eq('id', membership.guild_id)
+      .single(),
+    supabase
+      .from('events')
+      .select('id, title, game, description, starts_at, tanks_required, healers_required, dps_required')
+      .eq('guild_id', membership.guild_id)
+      .order('starts_at', { ascending: true })
+      .limit(24),
+    supabase
+      .from('guild_members')
+      .select('id, user_id, role, status, nickname, joined_at')
+      .eq('guild_id', membership.guild_id)
+      .order('joined_at', { ascending: true }),
+    supabase
+      .from('characters')
+      .select('member_id, name, class_name, specialization, combat_role, is_main')
+      .eq('guild_id', membership.guild_id),
+    supabase
+      .from('event_rsvps')
+      .select('id, event_id, member_id, status, combat_role, responded_at')
+      .eq('guild_id', membership.guild_id),
+    supabase
+      .from('profiles')
+      .select('username, avatar_url')
+      .eq('id', userId)
+      .maybeSingle(),
+  ])
+
+  if (!guildResult.data) {
+    throw new Error(guildResult.error?.message ?? 'Guild workspace could not be loaded.')
+  }
+
+  return (
+    <WorkspaceClient
+      guild={guildResult.data}
+      membership={membership}
+      events={eventsResult.data ?? []}
+      members={membersResult.data ?? []}
+      characters={charactersResult.data ?? []}
+      rsvps={rsvpsResult.data ?? []}
+      profile={profileResult.data}
+    />
+  )
 }
