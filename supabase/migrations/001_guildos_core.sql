@@ -2,6 +2,10 @@
 -- Apply with the Supabase CLI or SQL editor after creating the project.
 
 create extension if not exists pgcrypto;
+create schema if not exists private;
+
+revoke all on schema private from public;
+grant usage on schema private to authenticated;
 
 create type public.guild_member_role as enum ('owner','admin','officer','raid_leader','recruiter','member','trial');
 create type public.member_status as enum ('active','inactive','left','banned');
@@ -155,37 +159,42 @@ create index rsvps_event_idx on public.event_rsvps(event_id);
 create index applications_guild_status_idx on public.applications(guild_id, status);
 create index attendance_member_idx on public.attendance(member_id);
 
--- Helper functions keep RLS policies readable.
-create or replace function public.is_guild_member(target_guild uuid)
+-- SECURITY DEFINER helpers live outside the exposed public schema.
+create or replace function private.is_guild_member(target_guild uuid)
 returns boolean
 language sql
 stable
 security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1 from public.guild_members gm
     where gm.guild_id = target_guild
-      and gm.user_id = auth.uid()
+      and gm.user_id = (select auth.uid())
       and gm.status = 'active'
   );
 $$;
 
-create or replace function public.can_manage_guild(target_guild uuid)
+create or replace function private.can_manage_guild(target_guild uuid)
 returns boolean
 language sql
 stable
 security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1 from public.guild_members gm
     where gm.guild_id = target_guild
-      and gm.user_id = auth.uid()
+      and gm.user_id = (select auth.uid())
       and gm.status = 'active'
       and gm.role in ('owner','admin','officer','raid_leader','recruiter')
   );
 $$;
+
+revoke all on function private.is_guild_member(uuid) from public;
+revoke all on function private.can_manage_guild(uuid) from public;
+grant execute on function private.is_guild_member(uuid) to authenticated;
+grant execute on function private.can_manage_guild(uuid) to authenticated;
 
 alter table public.profiles enable row level security;
 alter table public.guilds enable row level security;
@@ -199,67 +208,120 @@ alter table public.announcements enable row level security;
 alter table public.discord_integrations enable row level security;
 alter table public.subscriptions enable row level security;
 
-create policy "profiles self read" on public.profiles for select using (id = auth.uid());
-create policy "profiles self update" on public.profiles for update using (id = auth.uid()) with check (id = auth.uid());
+create policy "profiles self read" on public.profiles for select to authenticated using (id = (select auth.uid()));
+create policy "profiles self update" on public.profiles for update to authenticated using (id = (select auth.uid())) with check (id = (select auth.uid()));
 
-create policy "members can read guilds" on public.guilds for select using (public.is_guild_member(id) or owner_id = auth.uid());
-create policy "authenticated users create guilds" on public.guilds for insert to authenticated with check (owner_id = auth.uid());
-create policy "managers update guilds" on public.guilds for update using (public.can_manage_guild(id) or owner_id = auth.uid());
+create policy "members can read guilds" on public.guilds for select to authenticated using (private.is_guild_member(id) or owner_id = (select auth.uid()));
+create policy "authenticated users create guilds" on public.guilds for insert to authenticated with check (owner_id = (select auth.uid()));
+create policy "managers update guilds" on public.guilds for update to authenticated
+using (private.can_manage_guild(id) or owner_id = (select auth.uid()))
+with check (private.can_manage_guild(id) or owner_id = (select auth.uid()));
 
-create policy "members read memberships" on public.guild_members for select using (public.is_guild_member(guild_id));
-create policy "managers add memberships" on public.guild_members for insert with check (public.can_manage_guild(guild_id) or user_id = auth.uid());
-create policy "managers update memberships" on public.guild_members for update using (public.can_manage_guild(guild_id));
-create policy "managers remove memberships" on public.guild_members for delete using (public.can_manage_guild(guild_id));
-
-create policy "members read characters" on public.characters for select using (public.is_guild_member(guild_id));
-create policy "members create own characters" on public.characters for insert with check (
-  public.is_guild_member(guild_id) and exists (
-    select 1 from public.guild_members gm where gm.id = member_id and gm.user_id = auth.uid()
+create policy "members read memberships" on public.guild_members for select to authenticated using (private.is_guild_member(guild_id));
+create policy "authorized users add memberships" on public.guild_members for insert to authenticated with check (
+  private.can_manage_guild(guild_id)
+  or (
+    user_id = (select auth.uid())
+    and exists (
+      select 1 from public.guilds g
+      where g.id = guild_id
+        and g.owner_id = (select auth.uid())
+    )
   )
 );
-create policy "members update own characters" on public.characters for update using (
-  exists (select 1 from public.guild_members gm where gm.id = member_id and gm.user_id = auth.uid())
-  or public.can_manage_guild(guild_id)
-);
+create policy "managers update memberships" on public.guild_members for update to authenticated
+using (private.can_manage_guild(guild_id))
+with check (private.can_manage_guild(guild_id));
+create policy "managers remove memberships" on public.guild_members for delete to authenticated using (private.can_manage_guild(guild_id));
 
-create policy "members read events" on public.events for select using (public.is_guild_member(guild_id));
-create policy "managers create events" on public.events for insert with check (public.can_manage_guild(guild_id));
-create policy "managers update events" on public.events for update using (public.can_manage_guild(guild_id));
-create policy "managers delete events" on public.events for delete using (public.can_manage_guild(guild_id));
-
-create policy "members read rsvps" on public.event_rsvps for select using (public.is_guild_member(guild_id));
-create policy "members create own rsvp" on public.event_rsvps for insert with check (
-  public.is_guild_member(guild_id) and exists (
-    select 1 from public.guild_members gm where gm.id = member_id and gm.user_id = auth.uid()
+create policy "members read characters" on public.characters for select to authenticated using (private.is_guild_member(guild_id));
+create policy "members create own characters" on public.characters for insert to authenticated with check (
+  private.is_guild_member(guild_id) and exists (
+    select 1 from public.guild_members gm where gm.id = member_id and gm.user_id = (select auth.uid())
   )
 );
-create policy "members update own rsvp" on public.event_rsvps for update using (
-  exists (select 1 from public.guild_members gm where gm.id = member_id and gm.user_id = auth.uid())
-  or public.can_manage_guild(guild_id)
+create policy "members update own characters" on public.characters for update to authenticated
+using (
+  exists (select 1 from public.guild_members gm where gm.id = member_id and gm.user_id = (select auth.uid()))
+  or private.can_manage_guild(guild_id)
+)
+with check (
+  exists (select 1 from public.guild_members gm where gm.id = member_id and gm.user_id = (select auth.uid()))
+  or private.can_manage_guild(guild_id)
 );
 
-create policy "members read attendance" on public.attendance for select using (public.is_guild_member(guild_id));
-create policy "managers manage attendance" on public.attendance for all using (public.can_manage_guild(guild_id)) with check (public.can_manage_guild(guild_id));
-
-create policy "members read applications" on public.applications for select using (public.can_manage_guild(guild_id) or applicant_user_id = auth.uid());
-create policy "authenticated apply" on public.applications for insert to authenticated with check (applicant_user_id = auth.uid());
-create policy "recruiters update applications" on public.applications for update using (public.can_manage_guild(guild_id));
-
-create policy "members read announcements" on public.announcements for select using (public.is_guild_member(guild_id));
-create policy "managers create announcements" on public.announcements for insert with check (public.can_manage_guild(guild_id));
-
-create policy "managers read discord integration" on public.discord_integrations for select using (public.can_manage_guild(guild_id));
-create policy "managers manage discord integration" on public.discord_integrations for all using (public.can_manage_guild(guild_id)) with check (public.can_manage_guild(guild_id));
-
-create policy "owners read subscriptions" on public.subscriptions for select using (
-  exists (select 1 from public.guild_members gm where gm.guild_id = subscriptions.guild_id and gm.user_id = auth.uid() and gm.role in ('owner','admin'))
+create policy "members read events" on public.events for select to authenticated using (private.is_guild_member(guild_id));
+create policy "managers create events" on public.events for insert to authenticated with check (
+  private.can_manage_guild(guild_id) and creator_id = (select auth.uid())
 );
+create policy "managers update events" on public.events for update to authenticated
+using (private.can_manage_guild(guild_id))
+with check (private.can_manage_guild(guild_id));
+create policy "managers delete events" on public.events for delete to authenticated using (private.can_manage_guild(guild_id));
+
+create policy "members read rsvps" on public.event_rsvps for select to authenticated using (private.is_guild_member(guild_id));
+create policy "members create own rsvp" on public.event_rsvps for insert to authenticated with check (
+  private.is_guild_member(guild_id) and exists (
+    select 1 from public.guild_members gm where gm.id = member_id and gm.user_id = (select auth.uid())
+  )
+);
+create policy "members update own rsvp" on public.event_rsvps for update to authenticated
+using (
+  exists (select 1 from public.guild_members gm where gm.id = member_id and gm.user_id = (select auth.uid()))
+  or private.can_manage_guild(guild_id)
+)
+with check (
+  exists (select 1 from public.guild_members gm where gm.id = member_id and gm.user_id = (select auth.uid()))
+  or private.can_manage_guild(guild_id)
+);
+
+create policy "members read attendance" on public.attendance for select to authenticated using (private.is_guild_member(guild_id));
+create policy "managers manage attendance" on public.attendance for all to authenticated using (private.can_manage_guild(guild_id)) with check (private.can_manage_guild(guild_id));
+
+create policy "members read applications" on public.applications for select to authenticated using (private.can_manage_guild(guild_id) or applicant_user_id = (select auth.uid()));
+create policy "authenticated apply" on public.applications for insert to authenticated with check (applicant_user_id = (select auth.uid()));
+create policy "recruiters update applications" on public.applications for update to authenticated
+using (private.can_manage_guild(guild_id))
+with check (private.can_manage_guild(guild_id));
+
+create policy "members read announcements" on public.announcements for select to authenticated using (private.is_guild_member(guild_id));
+create policy "managers create announcements" on public.announcements for insert to authenticated with check (
+  private.can_manage_guild(guild_id) and author_id = (select auth.uid())
+);
+
+create policy "managers read discord integration" on public.discord_integrations for select to authenticated using (private.can_manage_guild(guild_id));
+create policy "managers manage discord integration" on public.discord_integrations for all to authenticated
+using (private.can_manage_guild(guild_id))
+with check (private.can_manage_guild(guild_id) and configured_by = (select auth.uid()));
+
+create policy "owners read subscriptions" on public.subscriptions for select to authenticated using (
+  exists (
+    select 1 from public.guild_members gm
+    where gm.guild_id = subscriptions.guild_id
+      and gm.user_id = (select auth.uid())
+      and gm.role in ('owner','admin')
+  )
+);
+
+-- Explicit Data API permissions. RLS remains the authorization boundary.
+grant select, update on public.profiles to authenticated;
+grant select, insert, update on public.guilds to authenticated;
+grant select, insert, update, delete on public.guild_members to authenticated;
+grant select, insert, update on public.characters to authenticated;
+grant select, insert, update, delete on public.events to authenticated;
+grant select, insert, update on public.event_rsvps to authenticated;
+grant select, insert, update, delete on public.attendance to authenticated;
+grant select, insert, update on public.applications to authenticated;
+grant select, insert on public.announcements to authenticated;
+grant select, insert, update, delete on public.discord_integrations to authenticated;
+grant select on public.subscriptions to authenticated;
 
 -- Create a profile automatically for new Supabase auth users.
-create or replace function public.handle_new_user()
+create or replace function private.handle_new_user()
 returns trigger
 language plpgsql
-security definer set search_path = public
+security definer
+set search_path = ''
 as $$
 begin
   insert into public.profiles (id, username, avatar_url, discord_id)
@@ -274,6 +336,8 @@ begin
 end;
 $$;
 
+revoke all on function private.handle_new_user() from public;
+
 create trigger on_auth_user_created
 after insert on auth.users
-for each row execute procedure public.handle_new_user();
+for each row execute procedure private.handle_new_user();

@@ -22,7 +22,7 @@ export default function Home() {
       <nav className="nav">
         <Link className="brand" href="/"><span className="brand-mark">G</span><span>GUILDOS</span></Link>
         <div className="nav-links"><a href="#features">Features</a><a href="#pricing">Pricing</a><Link href="/dashboard">Demo</Link></div>
-        <div className="nav-actions"><Link className="btn" href="/dashboard">Sign in</Link><Link className="btn btn-primary" href="/dashboard">Open demo <ArrowRight size={16}/></Link></div>
+        <div className="nav-actions"><Link className="btn" href="/login">Sign in</Link><Link className="btn btn-primary" href="/dashboard">Open demo <ArrowRight size={16}/></Link></div>
       </nav>
 
       <main className="shell">
@@ -31,7 +31,7 @@ export default function Home() {
             <div className="eyebrow">The command center for gaming communities</div>
             <h1>Run your guild.<br/>Rally your team.</h1>
             <p>GuildOS turns Discord-based guild management into one clean operating system for events, rosters, recruitment, attendance, and officer coordination.</p>
-            <div className="hero-actions"><Link className="btn btn-primary" href="/dashboard">Launch live demo <ArrowRight size={17}/></Link><a className="btn" href="#features">Explore GuildOS</a></div>
+            <div className="hero-actions"><Link className="btn btn-primary" href="/login">Start free with Discord <ArrowRight size={17}/></Link><Link className="btn" href="/dashboard">Launch live demo</Link></div>
             <div className="hero-note">No credit card · Discord-first · Built for guilds, clans, and competitive communities</div>
           </div>
 
@@ -62,7 +62,7 @@ export default function Home() {
 
         <section className="section" id="pricing">
           <div className="section-head"><div className="eyebrow">Simple pricing</div><h2>Start free. Upgrade when the guild grows.</h2></div>
-          <div className="pricing">{plans.map(plan => <article className={`price-card${plan.featured ? ' featured' : ''}`} key={plan.name}><div className="small">{plan.note}</div><h3>{plan.name}</h3><div className="price">{plan.price}<span>{plan.price !== '$0' ? '/month' : ''}</span></div><ul>{plan.items.map(item => <li key={item}><Check size={15} style={{verticalAlign:'-2px',marginRight:8,color:'var(--accent)'}}/>{item}</li>)}</ul><Link className={`btn ${plan.featured ? 'btn-primary' : ''}`} style={{width:'100%',marginTop:10}} href="/dashboard">Try the demo</Link></article>)}</div>
+          <div className="pricing">{plans.map(plan => <article className={`price-card${plan.featured ? ' featured' : ''}`} key={plan.name}><div className="small">{plan.note}</div><h3>{plan.name}</h3><div className="price">{plan.price}<span>{plan.price !== '$0' ? '/month' : ''}</span></div><ul>{plan.items.map(item => <li key={item}><Check size={15} style={{verticalAlign:'-2px',marginRight:8,color:'var(--accent)'}}/>{item}</li>)}</ul><Link className={`btn ${plan.featured ? 'btn-primary' : ''}`} style={{width:'100%',marginTop:10}} href="/login">Start with Discord</Link></article>)}</div>
         </section>
 
         <footer className="footer"><div className="brand"><span className="brand-mark">G</span><span>GUILDOS</span></div><div>Run your guild. Rally your team.</div></footer>
